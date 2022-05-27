@@ -1,13 +1,14 @@
 package main
 
 import (
-	"./controller"
 	"flag"
 	"fmt"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	controllers "github.com/rf152/prometheus-vmware-exporter/controller"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -55,6 +56,11 @@ func collectMetrics() {
 		logger.Debugf("Start collect VM metrics")
 		controllers.NewVmwareVmMetrics(host, username, password, logger)
 		logger.Debugf("End collect VM metrics")
+	}()
+	go func() {
+		logger.Debugf("Start collect Numeric Sensor metrics")
+		controllers.NewVmwareNumericSensorMetrics(host, username, password, logger)
+		logger.Debugf("End collect Numeric Sensor metrics")
 	}()
 }
 

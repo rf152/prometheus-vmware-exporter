@@ -2,12 +2,14 @@ package controllers
 
 import (
 	"context"
+	"strings"
+
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
+	"github.com/vmware/govmomi/find"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	"github.com/vmware/govmomi/vim25/types"
-	"github.com/vmware/govmomi/find"
 )
 
 const namespace = "vmware"
@@ -76,7 +78,7 @@ var (
 	prometheusVmCpuAval = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Subsystem: "vm",
-		Name:      "cpu_avaleblemhz",
+		Name:      "cpu_availablemhz",
 		Help:      "VMWare VM usage CPU",
 	}, []string{"vm_name", "host_name"})
 	prometheusVmCpuUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -94,7 +96,7 @@ var (
 	prometheusVmMemAval = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: namespace,
 		Subsystem: "vm",
-		Name:      "mem_avaleble",
+		Name:      "mem_available",
 		Help:      "Available memory",
 	}, []string{"vm_name", "host_name"})
 	prometheusVmMemUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -109,6 +111,24 @@ var (
 		Name:      "net_rec",
 		Help:      "Usage memory",
 	}, []string{"vm_name", "host_name"})
+	prometheusNumericSensorValue = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "environment",
+		Name:      "value",
+		Help:      "Numeric Sensor Value",
+	}, []string{"numeric_sensor", "host_name"})
+	prometheusNumericSensorUnitModifier = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "environment",
+		Name:      "unitmodifier",
+		Help:      "Numeric Sensor Unit Modifier",
+	}, []string{"numeric_sensor", "host_name"})
+	prometheusNumericSensorState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace,
+		Subsystem: "environment",
+		Name:      "state",
+		Help:      "Numeric Sensor State",
+	}, []string{"numeric_sensor", "host_name"})
 )
 
 func totalCpu(hs mo.HostSystem) float64 {
@@ -153,7 +173,10 @@ func RegistredMetrics() {
 		prometheusVmMemAval,
 		prometheusVmMemUsage,
 		prometheusVmCpuUsage,
-		prometheusVmNetRec)
+		prometheusVmNetRec,
+		prometheusNumericSensorValue,
+		prometheusNumericSensorUnitModifier,
+		prometheusNumericSensorState)
 }
 
 func NewVmwareHostMetrics(host string, username string, password string, logger *log.Logger) {
@@ -261,5 +284,41 @@ func NewVmwareVmMetrics(host string, username string, password string, logger *l
 		prometheusVmNumCpu.WithLabelValues(vmname, host).Set(float64(vm.Summary.Config.NumCpu))
 		prometheusVmMemAval.WithLabelValues(vmname, host).Set(float64(vm.Summary.Config.MemorySizeMB))
 		prometheusVmMemUsage.WithLabelValues(vmname, host).Set(float64(vm.Summary.QuickStats.GuestMemoryUsage) * 1024 * 1024)
+	}
+}
+
+func NewVmwareNumericSensorMetrics(host string, username string, password string, logger *log.Logger) {
+	ctx := context.Background()
+	c, err := NewClient(ctx, host, username, password)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	defer c.Logout(ctx)
+	m := view.NewManager(c.Client)
+	v, err := m.CreateContainerView(ctx, c.ServiceContent.RootFolder, []string{"HostSystem"}, true)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	var hss []mo.HostSystem
+	err = v.Retrieve(ctx, []string{"HostSystem"}, []string{"runtime.healthSystemRuntime.systemHealthInfo.numericSensorInfo"}, &hss)
+	defer v.Destroy(ctx)
+
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	for _, hs := range hss {
+		sensors := hs.Runtime.HealthSystemRuntime.SystemHealthInfo.NumericSensorInfo
+
+		for _, sensor := range sensors {
+			if sensor.SensorType != "Software Components" && sensor.SensorType != "Processors" {
+				sensorname := strings.Split(sensor.Name, " ---")[0]
+
+				prometheusNumericSensorValue.WithLabelValues(sensorname, host).Set(float64(sensor.CurrentReading))
+				prometheusNumericSensorUnitModifier.WithLabelValues(sensorname, host).Set(float64(sensor.UnitModifier))
+			}
+
+		}
 	}
 }
